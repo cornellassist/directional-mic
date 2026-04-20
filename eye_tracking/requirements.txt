@@ -1,0 +1,6 @@
+pyserial
+pynput
+serial-tool
+websockets
+
+
