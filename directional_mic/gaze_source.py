@@ -32,21 +32,39 @@ class GazeSource(Protocol):
     def latest(self) -> GazeSample: ...
 
 
+class GazeUnavailableError(RuntimeError):
+    """Raised when no gaze sample has ever been received from the source."""
+
+
 class _BaseGazeSource:
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._latest = GazeSample(x=0.5, y=0.5, t=time.monotonic())
+        self._latest: GazeSample | None = None
+        self._first_sample = threading.Event()
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
 
     def latest(self) -> GazeSample:
         with self._lock:
-            return self._latest
+            sample = self._latest
+        if sample is None:
+            raise GazeUnavailableError(
+                "no gaze sample received yet from this source"
+            )
+        return sample
+
+    def wait_for_first_sample(self, timeout: float) -> bool:
+        """Block until the first real sample lands, or timeout elapses.
+
+        Returns True if a sample arrived, False on timeout.
+        """
+        return self._first_sample.wait(timeout=timeout)
 
     def _set(self, x: float, y: float) -> None:
         sample = GazeSample(x=float(x), y=float(y), t=time.monotonic())
         with self._lock:
             self._latest = sample
+        self._first_sample.set()
 
     def stop(self) -> None:
         self._stop.set()
@@ -130,10 +148,12 @@ class WebSocketGazeSource(_BaseGazeSource):
     Automatically reconnects with a small backoff if the connection drops.
     """
 
-    def __init__(self, uri: str, reconnect_s: float = 1.0) -> None:
+    def __init__(self, uri: str, reconnect_s: float = 1.0,
+                 debug_first_n: int = 1) -> None:
         super().__init__()
         self.uri = uri
         self.reconnect_s = float(reconnect_s)
+        self._debug_remaining = int(debug_first_n)
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -146,24 +166,34 @@ class WebSocketGazeSource(_BaseGazeSource):
         try:
             asyncio.run(self._consume())
         except Exception as e:  # noqa: BLE001 - background thread isolator
-            print(f"[gaze] websocket loop terminated: {e}")
+            print(f"[gaze] websocket loop terminated: {e!r}", flush=True)
 
     async def _consume(self) -> None:
-        import websockets  # lazy import so Mock-only users don't pay for it
+        try:
+            import websockets  # lazy import so Mock-only users don't pay for it
+        except ImportError as e:
+            print(f"[gaze] websockets library not installed: {e!r}", flush=True)
+            return
 
+        print(f"[gaze] connecting to {self.uri} ...", flush=True)
         while not self._stop.is_set():
             try:
                 async with websockets.connect(self.uri) as ws:
+                    print(f"[gaze] connected to {self.uri}; waiting for messages...",
+                          flush=True)
                     async for msg in ws:
                         if self._stop.is_set():
                             break
                         self._handle(msg)
             except Exception as e:  # noqa: BLE001 - reconnect on any failure
                 print(f"[gaze] connection error ({e!r}); reconnecting in "
-                      f"{self.reconnect_s:.1f}s")
+                      f"{self.reconnect_s:.1f}s", flush=True)
                 await asyncio.sleep(self.reconnect_s)
 
     def _handle(self, msg: str | bytes) -> None:
+        if self._debug_remaining > 0:
+            print(f"[gaze] raw message: {msg!r}")
+            self._debug_remaining -= 1
         try:
             payload = json.loads(msg)
         except (TypeError, ValueError):

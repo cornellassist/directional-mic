@@ -29,7 +29,12 @@ import time
 import numpy as np
 
 from .beamformer import STFTDelaySumBeamformer
-from .gaze_source import GazeSource, MockGazeSource, WebSocketGazeSource
+from .gaze_source import (
+    GazeSource,
+    GazeUnavailableError,
+    MockGazeSource,
+    WebSocketGazeSource,
+)
 from .geometry import gaze_to_azimuth
 
 
@@ -91,6 +96,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     p.add_argument("--log-every-s", type=float, default=1.0,
                    help="How often to print a one-line status update.")
+    p.add_argument("--gaze-startup-timeout-s", type=float, default=10.0,
+                   help="Fail fast if no gaze sample arrives within this "
+                        "many seconds of starting the source.")
+    p.add_argument("--gaze-stale-timeout-ms", type=float, default=1000.0,
+                   help="Warn in the status log when the latest gaze sample "
+                        "is older than this many milliseconds.")
 
     return p.parse_args(argv)
 
@@ -280,18 +291,26 @@ def _status_loop(args, gaze, status_summary, shutdown):
     while not shutdown.is_set():
         time.sleep(args.log_every_s)
         now = time.monotonic()
-        sample = gaze.latest()
+        extra = status_summary() if callable(status_summary) else ""
+        if not isinstance(extra, str):
+            extra = f"xruns={extra}"
+        try:
+            sample = gaze.latest()
+        except GazeUnavailableError:
+            print(f"[rt] gaze=UNAVAILABLE (no samples received) {extra}",
+                  flush=True)
+            continue
+        age_ms = (now - sample.t) * 1000.0
+        stale = age_ms > args.gaze_stale_timeout_ms
         az_deg = np.degrees(gaze_to_azimuth(
             sample.x,
             screen_width_cm=args.screen_width_cm,
             view_distance_cm=args.view_distance_cm,
         ))
-        age_ms = (now - sample.t) * 1000.0
-        extra = status_summary() if callable(status_summary) else ""
-        if not isinstance(extra, str):
-            extra = f"xruns={extra}"
+        stale_tag = " STALE" if stale else ""
         print(f"[rt] gaze=({sample.x:.2f},{sample.y:.2f}) "
-              f"az={az_deg:+.1f}° age={age_ms:.0f}ms {extra}")
+              f"az={az_deg:+.1f}° age={age_ms:.0f}ms{stale_tag} {extra}",
+              flush=True)
 
 
 # ---------------------------------------------------------------------------
@@ -320,6 +339,16 @@ def run(args: argparse.Namespace) -> int:
 
     gaze = _build_gaze_source(args)
     gaze.start()
+
+    if not gaze.wait_for_first_sample(args.gaze_startup_timeout_s):
+        gaze.stop()
+        raise SystemExit(
+            f"[rt] no gaze sample received within "
+            f"{args.gaze_startup_timeout_s:.1f}s — aborting. "
+            f"Check that the gaze producer is running and reachable "
+            f"(--gaze={args.gaze}, "
+            f"--gaze-uri={args.gaze_uri if args.gaze == 'websocket' else 'n/a'})."
+        )
 
     shutdown = threading.Event()
 
