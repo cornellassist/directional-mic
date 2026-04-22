@@ -91,16 +91,23 @@ class STFTDelaySumBeamformer:
         else:
             self._tau_current += self._alpha * (target_tau - self._tau_current)
 
-        # Analyze: windowed rFFT of each channel.
-        ch1 = self._in_buf[:, 0] * self.window
-        ch2 = self._in_buf[:, 1] * self.window
+        # Apply per-channel panning gains before delay-and-sum
+        pan = max(-1.0, min(1.0, math.sin(azimuth_rad)))
+
+        # stronger left when cursor is left, stronger right when cursor is right
+        left_gain = 0.2 + 0.8 * (1.0 - pan) / 2.0
+        right_gain = 0.2 + 0.8 * (1.0 + pan) / 2.0
+
+        # Analyze: windowed rFFT of each channel with panning gains applied.
+        ch1 = self._in_buf[:, 0] * self.window * left_gain
+        ch2 = self._in_buf[:, 1] * self.window * right_gain
         X1 = np.fft.rfft(ch1)
         X2 = np.fft.rfft(ch2)
 
         # Delay-and-sum: channel 2 is phase-rotated to align with channel 1
         # for a source at the steering direction, then averaged.
         steering = np.exp(-1j * 2.0 * math.pi * self.freqs * self._tau_current)
-        Y = 0.5 * (X1 + X2 * steering)
+        Y = X1 + X2 * steering
 
         # Synthesize: iFFT, apply synthesis window, overlap-add.
         frame = np.fft.irfft(Y, n=self.frame_size) * self.window
@@ -109,4 +116,5 @@ class STFTDelaySumBeamformer:
         out = self._out_buf[: self.hop].copy()
         self._out_buf[: -self.hop] = self._out_buf[self.hop :]
         self._out_buf[-self.hop :] = 0.0
+        
         return out
