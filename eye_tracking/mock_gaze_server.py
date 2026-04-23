@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
 import math
 import time
 
@@ -148,7 +149,7 @@ async def _serve(args, csv_rows, mouse_reader=None) -> None:
 
 def main() -> int:
     p = argparse.ArgumentParser(description="Simulated gaze websocket server.")
-    p.add_argument("--host", default="0.0.0.0")
+    p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8765)
     p.add_argument("--pattern", default="sweep",
                    help="center | sweep | circle | file:path.csv")
@@ -156,6 +157,9 @@ def main() -> int:
                    help="Period for sweep/circle patterns.")
     p.add_argument("--rate-hz", type=float, default=60.0)
     args = p.parse_args()
+
+    logging.getLogger("websockets.server").setLevel(logging.CRITICAL)
+    logging.getLogger("websockets").setLevel(logging.CRITICAL)
 
     csv_rows = None
     mouse_reader = None
