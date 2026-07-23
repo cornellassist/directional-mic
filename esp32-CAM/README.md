@@ -2,12 +2,13 @@
 
 Turn a **GOOUUU ESP32-S3-CAM** (ESP32-S3-WROOM-1 N16R8 + OV2640) into a WiFi webcam and consume its video in OpenCV for the directional-mic demo.
 
-Two parts:
+Three parts:
 
 | Folder | Side | What |
 |---|---|---|
 | [`CameraWebServer/`](CameraWebServer) | ESP32 firmware | Streams MJPEG over WiFi (`http://<ip>:81/stream`) |
 | [`webcam_opencv/`](webcam_opencv) | Python / OpenCV | Reads the stream, displays and saves frames |
+| [`pupil_tracker/`](pupil_tracker) | Python / OpenCV | Mounts the same camera near-eye, detects the pupil, and serves calibrated gaze over websocket |
 
 ## Quick Start
 
@@ -36,13 +37,14 @@ Camera model in `CameraWebServer/board_config.h` must be `CAMERA_MODEL_ESP32S3_E
 ## To-Do
 
 - [ ] Move WiFi credentials out of the sketch (avoid committing hotspot password)
-- [ ] Wire the stream into the gaze / beamforming demo
+- [x] Wire the stream into the gaze / beamforming demo — see [`pupil_tracker/`](pupil_tracker), one camera mounted near-eye instead of room-facing
 - [ ] Tune frame size / JPEG quality for latency vs. resolution
 
 ## Reference
 
 - [GOOUUU ESP32-S3-CAM pinout](https://github.com/profharris/GOOUUU_ESP32-S3-CAM)
 - [arduino-esp32 CameraWebServer discussion](https://github.com/espressif/arduino-esp32/discussions/9249)
+- [JEOresearch/EyeTracker](https://github.com/JEOresearch/EyeTracker) — pupil detection algorithm ported in [`pupil_tracker/`](pupil_tracker)
 - [Changing camera video settings (frame size / quality)](https://youtu.be/O3q-6ga4zlA?t=216)
 - [Removing the IR filter from the camera module](https://www.youtube.com/watch?v=mRSLSeX3omA)
 - Stream endpoints: `http://<ip>/` (web UI), `http://<ip>:81/stream` (raw MJPEG)
